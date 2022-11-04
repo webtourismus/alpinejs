@@ -1,0 +1,6 @@
+{
+    "name": "webtourismus/alpinejs",
+    "description": "Mirror of https://www.npmjs.com/package/alpinejs as drupal-library",
+    "type": "drupal-library",
+    "homepage": "https://alpinejs.dev"
+}
