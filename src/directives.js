@@ -17,6 +17,20 @@ let directiveHandlers = {}
 
 export function directive(name, callback) {
     directiveHandlers[name] = callback
+
+    return {
+        before(directive) {
+            if (!directiveHandlers[directive]) {
+                console.warn(
+                    "Cannot find directive `${directive}`. "
+                    + "`${name}` will use the default order of execution"
+                );
+                return;
+            }
+            const pos = directiveOrder.indexOf(directive);
+            directiveOrder.splice(pos >= 0 ? pos : directiveOrder.indexOf('DEFAULT'), 0, name);
+        }
+    }
 }
 
 export function directives(el, attributes, originalAttributeOverride) {
@@ -189,22 +203,9 @@ let directiveOrder = [
     'ref',
     'data',
     'id',
-    // @todo: provide better directive ordering mechanisms so
-    // that I don't have to manually add things like "tabs"
-    // to the order list...
-    'radio',
-    'tabs',
-    'switch',
-    'disclosure',
-    'menu',
-    'listbox',
-    'list',
-    'item',
-    'combobox',
     'bind',
     'init',
     'for',
-    'mask',
     'model',
     'modelable',
     'transition',
