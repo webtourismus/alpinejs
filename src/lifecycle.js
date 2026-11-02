@@ -1,5 +1,6 @@
 import { startObservingMutations, onAttributesAdded, onElAdded, onElRemoved, cleanupAttributes, cleanupElement } from "./mutation"
 import { deferHandlingDirectives, directiveExists, directives } from "./directives"
+import { queueAttributesForDeferredTree } from "./deferInit"
 import { dispatch } from './utils/dispatch'
 import { walk } from "./utils/walk"
 import { warn } from './utils/warn'
@@ -22,6 +23,10 @@ export function start() {
     onElRemoved(el => destroyTree(el))
 
     onAttributesAdded((el, attrs) => {
+        // Attributes added inside a suspended tree are held and replayed
+        // when the tree resumes...
+        if (queueAttributesForDeferredTree(el, attrs)) return
+
         directives(el, attrs).forEach(handle => handle())
     })
 
@@ -66,8 +71,11 @@ export function findClosest(el, callback) {
 
     if (callback(el)) return el
 
-    // Support crawling up teleports.
-    if (el._x_teleportBack) el = el._x_teleportBack
+    if (el._x_teleportBack) return findClosest(el._x_teleportBack, callback)
+
+    if (el.parentNode instanceof ShadowRoot) {
+        return findClosest(el.parentNode.host, callback)
+    }
 
     if (! el.parentElement) return
 
@@ -82,14 +90,27 @@ let initInterceptors = []
 
 export function interceptInit(callback) { initInterceptors.push(callback) }
 
+let markerDispenser = 1
+
 export function initTree(el, walker = walk, intercept = () => {}) {
+    // Don't init a tree within a parent that is being ignored...
+    if (findClosest(el, i => i._x_ignore)) return
+
     deferHandlingDirectives(() => {
         walker(el, (el, skip) => {
+            // If the element has a marker, it's already been initialized...
+            if (el._x_marker) return
+
             intercept(el, skip)
 
             initInterceptors.forEach(i => i(el, skip))
 
             directives(el, el.attributes).forEach(handle => handle())
+
+            // Add a marker to the element so we can tell if it's been initialized...
+            // This is important so that we can prevent double-initialization of
+            // elements that are moved around on the page.
+            if (!el._x_ignore) el._x_marker = markerDispenser++
 
             el._x_ignore && skip()
         })
@@ -98,8 +119,9 @@ export function initTree(el, walker = walk, intercept = () => {}) {
 
 export function destroyTree(root, walker = walk) {
     walker(root, el => {
-        cleanupAttributes(el)
         cleanupElement(el)
+        cleanupAttributes(el)
+        delete el._x_marker
     })
 }
 

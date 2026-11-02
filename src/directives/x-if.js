@@ -1,14 +1,12 @@
 import { evaluateLater } from '../evaluator'
 import { addScopeToNode } from '../scope'
 import { directive } from '../directives'
-import { initTree } from '../lifecycle'
+import { initTree, destroyTree } from '../lifecycle'
 import { mutateDom } from '../mutation'
-import { walk } from "../utils/walk"
-import { dequeueJob } from '../scheduler'
 import { warn } from "../utils/warn"
 import { skipDuringClone } from '../clone'
 
-directive('if', (el, { expression }, { effect, cleanup }) => {
+directive('if', skipDuringClone((el, { expression }, { effect, cleanup }) => {
     if (el.tagName.toLowerCase() !== 'template') warn('x-if can only be used on a <template> tag', el)
 
     let evaluate = evaluateLater(el, expression)
@@ -23,22 +21,24 @@ directive('if', (el, { expression }, { effect, cleanup }) => {
         mutateDom(() => {
             el.after(clone)
 
-            // These nodes will be "inited" as morph walks the tree...
-            skipDuringClone(() => initTree(clone))()
+            initTree(clone)
         })
 
         el._x_currentIfEl = clone
 
+        // Mark the last rendered element so morph can skip
+        // past it instead of trying to diff it...
+        el._x_lastRenderedEl = clone
+
         el._x_undoIf = () => {
-            walk(clone, (node) => {
-                if (!!node._x_effects) {
-                    node._x_effects.forEach(dequeueJob)
-                }
+            mutateDom(() => {
+                destroyTree(clone)
+
+                clone.remove()
             })
 
-            clone.remove();
-
             delete el._x_currentIfEl
+            delete el._x_lastRenderedEl
         }
 
         return clone
@@ -54,7 +54,7 @@ directive('if', (el, { expression }, { effect, cleanup }) => {
 
     effect(() => evaluate(value => {
         value ? show() : hide()
-    }))
+    }), { priority: 'structural' })
 
     cleanup(() => el._x_undoIf && el._x_undoIf())
-})
+}))

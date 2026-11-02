@@ -1,5 +1,5 @@
 import { directive } from '../directives'
-import { initTree } from '../lifecycle'
+import { destroyTree, initTree } from '../lifecycle'
 import { mutateDom } from '../mutation'
 
 directive('html', (el, { expression }, { effect, evaluateLater }) => {
@@ -8,12 +8,13 @@ directive('html', (el, { expression }, { effect, evaluateLater }) => {
     effect(() => {
         evaluate(value => {
             mutateDom(() => {
-                el.innerHTML = value
+                Array.from(el.children).forEach(child => destroyTree(child))
+                el.innerHTML = value ?? ''
 
                 el._x_ignoreSelf = true
                 initTree(el)
                 delete el._x_ignoreSelf
             })
         })
-    })
+    }, { priority: 'structural' })
 })

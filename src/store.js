@@ -13,11 +13,16 @@ export function store(name, value) {
 
     stores[name] = value
 
+    // Initialize the interceptor directly when it is the store value itself.
+    if (typeof value === 'object' && value !== null && value._x_interceptor) {
+        stores[name] = value.initialize(stores, name, name, () => {})
+    } else {
+        initInterceptors(stores[name])
+    }
+
     if (typeof value === 'object' && value !== null && value.hasOwnProperty('init') && typeof value.init === 'function') {
         stores[name].init()
     }
-
-    initInterceptors(stores[name])
 }
 
 export function getStores() { return stores }

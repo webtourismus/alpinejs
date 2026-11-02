@@ -39,23 +39,14 @@ export default function bind(el, name, value, modifiers = []) {
 }
 
 function bindInputValue(el, value) {
-    if (el.type === 'radio') {
+    if (isRadio(el)) {
         // Set radio value from x-bind:value, if no "value" attribute exists.
         // If there are any initial state values, radio will have a correct
         // "checked" value since x-bind:value is processed before x-model.
         if (el.attributes.value === undefined) {
             el.value = value
         }
-
-        // @todo: yuck
-        if (window.fromModel) {
-            if (typeof value === 'boolean') {
-                el.checked = safeParseBoolean(el.value) === value
-            } else {
-                el.checked = checkedAttrLooseCompare(el.value, value)
-            }
-        }
-    } else if (el.type === 'checkbox') {
+    } else if (isCheckbox(el)) {
         // If we are explicitly binding a string to the :value, set the string,
         // If the value is a boolean/array/number/null/undefined, leave it alone, it will be set to "on"
         // automatically.
@@ -72,8 +63,15 @@ function bindInputValue(el, value) {
         }
     } else if (el.tagName === 'SELECT') {
         updateSelect(el, value)
+    } else if (el.tagName === 'OPTION') {
+        bindAttribute(el, 'value', value)
     } else {
-        if (el.value === value) return
+        // For non-null objects, reference equality doesn't imply state
+        // equality: reactive proxies can mutate internally while the
+        // top-level reference stays the same. Without this guard, custom
+        // elements receiving an object value via x-bind:value or x-model
+        // would never see those nested updates.
+        if (el.value === value && (typeof value !== 'object' || value === null)) return
 
         el.value = value === undefined ? '' : value
     }
@@ -101,6 +99,7 @@ function bindAttribute(el, name, value) {
         el.removeAttribute(name)
     } else {
         if (isBooleanAttr(name)) value = name
+        if (isObjectAttr(value)) value = JSON.stringify(value)
 
         setIfChanged(el, name, value)
     }
@@ -146,22 +145,47 @@ export function safeParseBoolean(rawValue) {
     return rawValue ? Boolean(rawValue) : null
 }
 
-function isBooleanAttr(attrName) {
-    // As per HTML spec table https://html.spec.whatwg.org/multipage/indices.html#attributes-3:boolean-attribute
-    // Array roughly ordered by estimated usage
-    const booleanAttributes = [
-        'disabled','checked','required','readonly','open', 'selected',
-        'autofocus', 'itemscope', 'multiple', 'novalidate','allowfullscreen',
-        'allowpaymentrequest', 'formnovalidate', 'autoplay', 'controls', 'loop',
-        'muted', 'playsinline', 'default', 'ismap', 'reversed', 'async', 'defer',
-        'nomodule'
-    ]
+// As per HTML spec table https://html.spec.whatwg.org/multipage/indices.html#attributes-3:boolean-attribute
+const booleanAttributes = new Set([
+    'allowfullscreen',
+    'async',
+    'autofocus',
+    'autoplay',
+    'checked',
+    'controls',
+    'default',
+    'defer',
+    'disabled',
+    'formnovalidate',
+    'inert',
+    'ismap',
+    'itemscope',
+    'loop',
+    'multiple',
+    'muted',
+    'nomodule',
+    'novalidate',
+    'open',
+    'playsinline',
+    'readonly',
+    'required',
+    'reversed',
+    'selected',
+    'shadowrootclonable',
+    'shadowrootdelegatesfocus',
+    'shadowrootserializable',
+])
 
-    return booleanAttributes.includes(attrName)
+function isBooleanAttr(attrName) {
+    return booleanAttributes.has(attrName)
 }
 
 function attributeShouldntBePreservedIfFalsy(name) {
     return ! ['aria-pressed', 'aria-checked', 'aria-expanded', 'aria-selected'].includes(name)
+}
+
+function isObjectAttr(value) {
+    return typeof value === 'object' && value !== null
 }
 
 export function getBinding(el, name, fallback) {
@@ -203,4 +227,12 @@ function getAttributeBinding(el, name, fallback) {
     }
 
     return attr
+}
+
+export function isCheckbox(el) {
+    return el.type === 'checkbox' || el.localName === 'ui-checkbox' || el.localName === 'ui-switch'
+}
+
+export function isRadio(el) {
+    return el.type === 'radio' || el.localName === 'ui-radio'
 }

@@ -14,26 +14,18 @@ export default function on (el, event, modifiers, callback) {
 
     if (modifiers.includes("dot")) event = dotSyntax(event)
     if (modifiers.includes('camel')) event = camelCase(event)
-    if (modifiers.includes('passive')) options.passive = true
     if (modifiers.includes('capture')) options.capture = true
     if (modifiers.includes('window')) listenerTarget = window
     if (modifiers.includes('document')) listenerTarget = document
 
+    if (modifiers.includes('passive')) {
+        options.passive = modifiers[modifiers.indexOf('passive')+1] !== 'false'
+    }
+
     // By wrapping the handler with debounce & throttle first, we ensure that the wrapping logic itself is not
     // throttled/debounced, only the user's callback is. This way, if the user expects
     // `e.preventDefault()` to happen, it'll still happen even if their callback gets throttled.
-    if (modifiers.includes('debounce')) {
-        let nextModifier = modifiers[modifiers.indexOf('debounce')+1] || 'invalid-wait'
-        let wait = isNumeric(nextModifier.split('ms')[0]) ? Number(nextModifier.split('ms')[0]) : 250
-
-        handler = debounce(handler, wait)
-    }
-    if (modifiers.includes('throttle')) {
-        let nextModifier = modifiers[modifiers.indexOf('throttle')+1] || 'invalid-wait'
-        let wait = isNumeric(nextModifier.split('ms')[0]) ? Number(nextModifier.split('ms')[0]) : 250
-
-        handler = throttle(handler, wait)
-    }
+    handler = addDebounceOrThrottle(modifiers, handler)
 
     if (modifiers.includes('prevent')) handler = wrapHandler(handler, (next, e) => { e.preventDefault(); next(e) })
     if (modifiers.includes('stop')) handler = wrapHandler(handler, (next, e) => { e.stopPropagation(); next(e) })
@@ -66,22 +58,51 @@ export default function on (el, event, modifiers, callback) {
 
     if (modifiers.includes('self')) handler = wrapHandler(handler, (next, e) => { e.target === el && next(e) })
 
+    // Flush any pending model updates before submit handlers run
+    // (e.g. x-model.blur inputs that haven't synced yet).
+    if (event === 'submit') {
+        handler = wrapHandler(handler, (next, e) => {
+            if (e.target._x_pendingModelUpdates) {
+                e.target._x_pendingModelUpdates.forEach(fn => fn())
+            }
+
+            next(e)
+        })
+    }
+
     // Handle :keydown and :keyup listeners.
-    handler = wrapHandler(handler, (next, e) => {
-        if (isKeyEvent(event)) {
+    // Handle :click and :auxclick listeners.
+    if (isKeyEvent(event) || isClickEvent(event)) {
+        handler = wrapHandler(handler, (next, e) => {
             if (isListeningForASpecificKeyThatHasntBeenPressed(e, modifiers)) {
                 return
             }
-        }
 
-        next(e)
-    })
+            next(e)
+        })
+    }
 
     listenerTarget.addEventListener(event, handler, options)
 
     return () => {
         listenerTarget.removeEventListener(event, handler, options)
     }
+}
+
+export function addDebounceOrThrottle(modifiers, handler) {
+    if (modifiers.includes('debounce')) {
+        let nextModifier = modifiers[modifiers.indexOf('debounce')+1] || 'invalid-wait'
+        let wait = isNumeric(nextModifier.split('ms')[0]) ? Number(nextModifier.split('ms')[0]) : 250
+
+        handler = debounce(handler, wait)
+    }
+    if (modifiers.includes('throttle')) {
+        let nextModifier = modifiers[modifiers.indexOf('throttle')+1] || 'invalid-wait'
+        let wait = isNumeric(nextModifier.split('ms')[0]) ? Number(nextModifier.split('ms')[0]) : 250
+
+        handler = throttle(handler, wait)
+    }
+    return handler
 }
 
 function dotSyntax(subject) {
@@ -106,9 +127,29 @@ function isKeyEvent(event) {
     return ['keydown', 'keyup'].includes(event)
 }
 
+function isClickEvent(event) {
+    return ['contextmenu','click','mouse'].some(i => event.includes(i))
+}
+
+// Every modifier x-on and x-model consume themselves. None of them is a key
+// name, so none of them may be mistaken for one. (`enter` is deliberately
+// absent: it is a real key. `preserve-scroll` is specifically for Livewire
+// and is not used by Alpine...)
+const nonKeyModifiers = [
+    // x-on's own modifiers:
+    'window', 'document', 'prevent', 'stop', 'once', 'capture', 'self',
+    'away', 'outside', 'passive', 'dot', 'camel', 'preserve-scroll',
+    // x-model's own modifiers:
+    'blur', 'change', 'lazy', 'number', 'boolean', 'trim', 'fill',
+    'unintrusive', 'parent',
+]
+
 function isListeningForASpecificKeyThatHasntBeenPressed(e, modifiers) {
-    let keyModifiers = modifiers.filter(i => {
-        return ! ['window', 'document', 'prevent', 'stop', 'once', 'capture'].includes(i)
+    let keyModifiers = modifiers.filter((modifier, index) => {
+        // `.passive.false` - the argument isn't a key name either.
+        if (modifier === 'false' && modifiers[index - 1] === 'passive') return false
+
+        return ! nonKeyModifiers.includes(modifier)
     })
 
     if (keyModifiers.includes('debounce')) {
@@ -143,7 +184,11 @@ function isListeningForASpecificKeyThatHasntBeenPressed(e, modifiers) {
 
         // If all the modifiers selected are pressed, ...
         if (activelyPressedKeyModifiers.length === selectedSystemKeyModifiers.length) {
-            // AND the remaining key is pressed as well. It's a press.
+
+            // AND the event is a click. It's a pass.
+            if (isClickEvent(e.type)) return false
+
+            // OR the remaining key is pressed as well. It's a press.
             if (keyToModifiers(e.key).includes(keyModifiers[0])) return false
         }
     }
@@ -169,6 +214,7 @@ function keyToModifiers(key) {
         'left': 'arrow-left',
         'right': 'arrow-right',
         'period': '.',
+        'comma': ',',
         'equal': '=',
         'minus': '-',
         'underscore': '_',
